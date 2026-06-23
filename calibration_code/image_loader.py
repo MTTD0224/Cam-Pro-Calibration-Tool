@@ -231,9 +231,18 @@ class ImageLoader:
         return data['images'].get(index, None)
 
     def get_white_image(self, pose_name):
-        """获取全白棋盘格图像（索引 4N+1）"""
+        """获取全白棋盘格图像（索引 4N）"""
         idx = self.config.get_graycode_indices()['white']
         return self.get_image(pose_name, idx)
+
+    def get_white_image_path(self, pose_name):
+        """获取全白棋盘格图像的文件路径（索引 4N）"""
+        idx = self.config.get_graycode_indices()['white']
+        data = self.get_pose_data(pose_name)
+        if data is None:
+            return None
+        folder_path = data.get('folder_path', '')
+        return self._find_image_file(folder_path, idx)
 
     def get_black_image(self, pose_name):
         """获取全黑背景图像（索引 0）"""

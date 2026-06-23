@@ -29,10 +29,11 @@ try:
         QPushButton, QLineEdit, QLabel, QFileDialog, QMessageBox,
         QProgressBar, QTextEdit, QSpinBox, QDoubleSpinBox, QGroupBox,
         QFormLayout, QTableWidget, QTableWidgetItem, QHeaderView,
-        QSplitter, QTabWidget, QCheckBox
+        QSplitter, QTabWidget, QCheckBox, QComboBox,
+        QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
     )
-    from PyQt5.QtCore import Qt, QThread, pyqtSignal
-    from PyQt5.QtGui import QFont, QPixmap, QImage
+    from PyQt5.QtCore import Qt, QThread, pyqtSignal, QPointF
+    from PyQt5.QtGui import QFont, QPixmap, QImage, QCursor, QPainter
 except ImportError:
     print("[错误] 请先安装 PyQt5: pip install PyQt5")
     sys.exit(1)
@@ -82,6 +83,106 @@ class CalibrationWorker(QThread):
             import traceback
             self._log(traceback.format_exc())
             self.finished_signal.emit({}, False)
+
+
+# ==================== 可缩放图像视图 ====================
+
+class ZoomableGraphicsView(QGraphicsView):
+    """支持鼠标拖拽平移和滚轮缩放的图像视图"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self._pixmap_item = None
+        self._zoom_factor = 1.0
+        self._min_zoom = 0.1
+        self._max_zoom = 5.0
+        self._is_panning = False
+        self._last_pos = QPointF()
+        self._empty_text = None
+
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+
+        self._placeholder_label = QLabel("图像预览（点击左侧文件查看）")
+        self._placeholder_label.setAlignment(Qt.AlignCenter)
+        self._placeholder_label.setStyleSheet(
+            "color:#888; font-size:14px;")
+
+    def set_empty_text(self, text):
+        """设置空白状态时的提示文字"""
+        self._empty_text = text
+        if self._pixmap_item is None:
+            self._placeholder_label.setText(text)
+
+    def set_image(self, pixmap):
+        """设置要显示的图像"""
+        self._scene.clear()
+        if pixmap is None or pixmap.isNull():
+            self._pixmap_item = None
+            self._zoom_factor = 1.0
+            self.resetTransform()
+            return
+
+        self._pixmap_item = QGraphicsPixmapItem(pixmap)
+        self._scene.addItem(self._pixmap_item)
+        self._scene.setSceneRect(self._pixmap_item.boundingRect())
+
+        self.reset_view()
+
+    def reset_view(self):
+        """重置视图：自适应显示整个图像"""
+        if self._pixmap_item is not None:
+            self.fitInView(self._pixmap_item, Qt.KeepAspectRatio)
+            self._zoom_factor = self.transform().m11()
+
+    def zoom_in(self):
+        """放大"""
+        self.scale(1.2, 1.2)
+        self._zoom_factor *= 1.2
+
+    def zoom_out(self):
+        """缩小"""
+        self.scale(1/1.2, 1/1.2)
+        self._zoom_factor /= 1.2
+
+    def wheelEvent(self, event):
+        """滚轮缩放"""
+        if event.angleDelta().y() > 0:
+            self.scale(1.15, 1.15)
+            self._zoom_factor *= 1.15
+        else:
+            self.scale(1/1.15, 1/1.15)
+            self._zoom_factor /= 1.15
+        event.accept()
+
+    def mousePressEvent(self, event):
+        """鼠标按下：开始拖拽"""
+        if event.button() == Qt.LeftButton:
+            self._is_panning = True
+            self._last_pos = self.mapToScene(event.pos())
+            self.setCursor(QCursor(Qt.ClosedHandCursor))
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """鼠标释放：结束拖拽"""
+        if event.button() == Qt.LeftButton:
+            self._is_panning = False
+            self.setCursor(QCursor(Qt.ArrowCursor))
+        super().mouseReleaseEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """鼠标移动：拖拽平移"""
+        if self._is_panning and self._pixmap_item is not None:
+            current_pos = self.mapToScene(event.pos())
+            delta = current_pos - self._last_pos
+            self.translate(delta.x(), delta.y())
+            self._last_pos = current_pos
+        super().mouseMoveEvent(event)
 
 
 # ==================== 主窗口 ====================
@@ -164,6 +265,11 @@ class CalibrationMainWindow(QMainWindow):
         form.setLabelAlignment(Qt.AlignRight)
         form.setVerticalSpacing(8)
 
+        self.cb_pattern_type = QComboBox()
+        self.cb_pattern_type.addItems(["棋盘格", "圆形网格"])
+        self.cb_pattern_type.setCurrentIndex(0)
+        self.cb_pattern_type.currentIndexChanged.connect(self._on_pattern_type_changed)
+
         self.spin_cols = QSpinBox()
         self.spin_cols.setRange(3, 50)
         self.spin_cols.setValue(self.config.pattern_size[0])
@@ -177,6 +283,20 @@ class CalibrationMainWindow(QMainWindow):
         self.spin_square.setDecimals(2)
         self.spin_square.setValue(self.config.square_size)
         self.spin_square.setSuffix(" mm")
+
+        self.spin_circle_cols = QSpinBox()
+        self.spin_circle_cols.setRange(3, 50)
+        self.spin_circle_cols.setValue(self.config.circle_pattern_size[0])
+
+        self.spin_circle_rows = QSpinBox()
+        self.spin_circle_rows.setRange(3, 50)
+        self.spin_circle_rows.setValue(self.config.circle_pattern_size[1])
+
+        self.spin_circle_spacing = QDoubleSpinBox()
+        self.spin_circle_spacing.setRange(1.0, 500.0)
+        self.spin_circle_spacing.setDecimals(2)
+        self.spin_circle_spacing.setValue(self.config.circle_spacing)
+        self.spin_circle_spacing.setSuffix(" mm")
 
         self.spin_bits = QSpinBox()
         self.spin_bits.setRange(4, 16)
@@ -207,15 +327,29 @@ class CalibrationMainWindow(QMainWindow):
         out_wrapper = QWidget()
         out_wrapper.setLayout(out_row)
 
-        form.addRow("棋盘格内点列数：", self.spin_cols)
-        form.addRow("棋盘格内点行数：", self.spin_rows)
-        form.addRow("方格边长：", self.spin_square)
+        self.lbl_cols = QLabel("棋盘格内点列数：")
+        self.lbl_rows = QLabel("棋盘格内点行数：")
+        self.lbl_square = QLabel("方格边长：")
+
+        self.lbl_circle_cols = QLabel("圆形网格列数：")
+        self.lbl_circle_rows = QLabel("圆形网格行数：")
+        self.lbl_circle_spacing = QLabel("圆心间距：")
+
+        form.addRow("标定板类型：", self.cb_pattern_type)
+        form.addRow(self.lbl_cols, self.spin_cols)
+        form.addRow(self.lbl_rows, self.spin_rows)
+        form.addRow(self.lbl_square, self.spin_square)
+        form.addRow(self.lbl_circle_cols, self.spin_circle_cols)
+        form.addRow(self.lbl_circle_rows, self.spin_circle_rows)
+        form.addRow(self.lbl_circle_spacing, self.spin_circle_spacing)
         form.addRow("格雷码位数：", self.spin_bits)
         form.addRow("投影仪宽度(px)：", self.spin_proj_w)
         form.addRow("投影仪高度(px)：", self.spin_proj_h)
         form.addRow("误差过滤阈值：", self.spin_threshold)
         form.addRow("输出目录：", out_wrapper)
         layout.addWidget(param_group)
+
+        self._on_pattern_type_changed(0)
 
         # 3. 按钮
         op_group = QGroupBox("3. 标定操作")
@@ -286,12 +420,11 @@ class CalibrationMainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_box)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
-        self.preview_image_label = QLabel("图像预览")
-        self.preview_image_label.setAlignment(Qt.AlignCenter)
-        self.preview_image_label.setMinimumHeight(360)
-        self.preview_image_label.setStyleSheet(
-            "background:#f5f5f5; border:1px solid #ddd; color:#888; padding:30px; font-size:13px;")
-        right_layout.addWidget(self.preview_image_label, 1)
+        self.preview_image_view = ZoomableGraphicsView()
+        self.preview_image_view.setStyleSheet(
+            "background:#f5f5f5; border:1px solid #ddd;")
+        self.preview_image_view.setMinimumHeight(360)
+        right_layout.addWidget(self.preview_image_view, 1)
 
         self.preview_image_status = QLabel("")
         self.preview_image_status.setStyleSheet(
@@ -427,12 +560,35 @@ class CalibrationMainWindow(QMainWindow):
 
     def _collect_config(self):
         cfg = CalibrationConfig()
-        cfg.pattern_size = (int(self.spin_cols.value()), int(self.spin_rows.value()))
-        cfg.square_size = float(self.spin_square.value())
+        if self.cb_pattern_type.currentIndex() == 0:
+            cfg.pattern_type = CalibrationConfig.PATTERN_CHESSBOARD
+            cfg.pattern_size = (int(self.spin_cols.value()), int(self.spin_rows.value()))
+            cfg.square_size = float(self.spin_square.value())
+        else:
+            cfg.pattern_type = CalibrationConfig.PATTERN_CIRCLES_GRID
+            cfg.circle_pattern_size = (int(self.spin_circle_cols.value()), int(self.spin_circle_rows.value()))
+            cfg.circle_spacing = float(self.spin_circle_spacing.value())
         cfg.graycode_bits = int(self.spin_bits.value())
         cfg.projector_size = (int(self.spin_proj_w.value()), int(self.spin_proj_h.value()))
         cfg.reprojection_threshold = float(self.spin_threshold.value())
         return cfg
+
+    def _on_pattern_type_changed(self, index):
+        """标定板类型切换回调：显示/隐藏对应的参数控件"""
+        is_chessboard = index == 0
+        self.lbl_cols.setVisible(is_chessboard)
+        self.spin_cols.setVisible(is_chessboard)
+        self.lbl_rows.setVisible(is_chessboard)
+        self.spin_rows.setVisible(is_chessboard)
+        self.lbl_square.setVisible(is_chessboard)
+        self.spin_square.setVisible(is_chessboard)
+
+        self.lbl_circle_cols.setVisible(not is_chessboard)
+        self.spin_circle_cols.setVisible(not is_chessboard)
+        self.lbl_circle_rows.setVisible(not is_chessboard)
+        self.spin_circle_rows.setVisible(not is_chessboard)
+        self.lbl_circle_spacing.setVisible(not is_chessboard)
+        self.spin_circle_spacing.setVisible(not is_chessboard)
 
     def _choose_root_dir(self):
         path = QFileDialog.getExistingDirectory(self, "选择标定图像根目录", "")
@@ -447,14 +603,14 @@ class CalibrationMainWindow(QMainWindow):
             self._append_log(f"已选择输出目录: {path}")
 
     def _action_preview(self):
-        """扫描所有位姿文件夹下的所有图像，逐张检测角点并填充树状列表。"""
+        """扫描所有位姿文件夹，仅对最后一张全白投影图（4N.bmp）进行角点检测并填充树状列表。"""
         root_dir = self.root_dir_edit.text().strip()
         if not root_dir or not os.path.exists(root_dir):
             QMessageBox.warning(self, "警告", "请先设置有效的图像根目录")
             return
 
         cfg = self._collect_config()
-        self._append_log("开始扫描所有位姿并进行角点检测...")
+        self._append_log("开始扫描所有位姿并进行角点检测（仅全白投影图）...")
         try:
             from image_loader import ImageLoader
             loader = ImageLoader(cfg)
@@ -462,81 +618,56 @@ class CalibrationMainWindow(QMainWindow):
 
             detector = ChessboardDetector(cfg)
 
-            # 清空当前树
             self.preview_tree.clear()
-            self._preview_cache = {}  # key: item, value: {corners, image_path, size}
-            total_images = 0
+            self._preview_cache = {}
             total_corners_ok = 0
-            poses_with_any_ok = 0
 
-            # 先在树中插入所有位姿节点
             pose_items = {}
             for pose_name in loader.pose_names:
                 from PyQt5.QtWidgets import QTreeWidgetItem
                 pose_item = QTreeWidgetItem([pose_name, "", "", ""])
                 pose_item.setFlags(pose_item.flags())
-                pose_item.setData(0, Qt.UserRole, None)  # marker: pose-node
+                pose_item.setData(0, Qt.UserRole, None)
                 self.preview_tree.addTopLevelItem(pose_item)
                 pose_items[pose_name] = pose_item
 
-            # 遍历所有位姿、所有图像
-            import glob
             for pose_name in loader.pose_names:
-                pose_path = os.path.join(root_dir, pose_name)
-                if not os.path.isdir(pose_path):
-                    continue
-                exts = ["*.bmp", "*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff"]
-                files = []
-                for ext in exts:
-                    files.extend(glob.glob(os.path.join(pose_path, ext)))
-                files = sorted(set(files), key=lambda f: os.path.basename(f))
-                if not files:
+                white_img = loader.get_white_image(pose_name)
+                if white_img is None:
                     continue
 
-                pose_corners_ok = 0
-                for fpath in files:
-                    fname = os.path.basename(fpath)
-                    img = cv2.imread(fpath, cv2.IMREAD_GRAYSCALE)
-                    if img is None:
-                        continue
-                    total_images += 1
-                    h, w = img.shape[:2]
+                ret, corners = detector.detect_corners(white_img)
 
-                    # 角点检测（对高分辨率图像做一点下采样加速预览）
-                    working = img
-                    ret, corners = detector.detect_corners(working)
+                n_corners = 0
+                ok_mark = "✗"
+                if ret and corners is not None:
+                    n_corners = len(corners)
+                    ok_mark = "✓"
+                    total_corners_ok += 1
 
-                    n_corners = 0
-                    ok_mark = "✗"
-                    if ret and corners is not None:
-                        n_corners = len(corners)
-                        ok_mark = "✓"
-                        total_corners_ok += 1
-                        pose_corners_ok += 1
+                white_path = loader.get_white_image_path(pose_name)
+                fname = os.path.basename(white_path) if white_path else f"{4 * cfg.graycode_bits}.bmp"
+                h, w = white_img.shape[:2]
 
-                    item = QTreeWidgetItem([fname, ok_mark, f"{w}x{h}", str(n_corners)])
-                    item.setData(0, Qt.UserRole, fpath)  # 存图像绝对路径，点击时再读取
-                    item.setData(1, Qt.UserRole, 1 if ret and corners is not None else 0)
-                    pose_items[pose_name].addChild(item)
+                item = QTreeWidgetItem([fname, ok_mark, f"{w}x{h}", str(n_corners)])
+                item.setData(0, Qt.UserRole, white_path)
+                item.setData(1, Qt.UserRole, 1 if ret and corners is not None else 0)
+                pose_items[pose_name].addChild(item)
 
-                # 位姿节点的状态显示
                 pose_item = pose_items[pose_name]
-                pose_item.setText(1, f"{pose_corners_ok}/{len(files)}")
-                pose_item.setText(2, str(len(files)) + " 张")
-                pose_item.setText(3, "角点")
-                if pose_corners_ok > 0:
-                    poses_with_any_ok += 1
+                pose_item.setText(1, ok_mark)
+                pose_item.setText(2, f"{w}x{h}")
+                pose_item.setText(3, str(n_corners))
+                if ret:
                     pose_item.setExpanded(True)
 
             total_poses = len(loader.pose_names)
-            summary = (f"扫描完成：共 {total_poses} 个位姿，{total_images} 张图像，"
-                       f"{total_corners_ok} 张角点检测成功。点击左侧文件可查看大图。")
+            summary = (f"扫描完成：共 {total_poses} 个位姿，"
+                       f"{total_corners_ok} 个全白投影图角点检测成功。点击左侧文件可查看大图。")
             self.preview_summary.setText(summary)
             self._append_log(summary)
 
-            # 如果之前有图像，清空预览
-            self.preview_image_label.clear()
-            self.preview_image_label.setText("图像预览（点击左侧文件查看）")
+            self.preview_image_view.set_image(QPixmap())
             self.preview_image_status.setText("")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"角点预览失败: {str(e)}")
@@ -546,19 +677,16 @@ class CalibrationMainWindow(QMainWindow):
         """点击树状列表中的项：如果是图像节点，则显示该图像 + 角点叠加。"""
         fpath = item.data(0, Qt.UserRole)
         if fpath is None or not isinstance(fpath, str) or not os.path.exists(fpath):
-            # 是位姿节点，不做图像显示
             return
 
         try:
             cfg = self._collect_config()
             img = cv2.imread(fpath, cv2.IMREAD_COLOR)
             if img is None:
-                self.preview_image_label.setText(f"无法读取图像: {os.path.basename(fpath)}")
-                self.preview_image_status.setText("")
+                self.preview_image_status.setText(f"无法读取图像: {os.path.basename(fpath)}")
                 return
             h, w = img.shape[:2]
 
-            # 角点检测
             detector = ChessboardDetector(cfg)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             ret, corners = detector.detect_corners(gray)
@@ -569,17 +697,6 @@ class CalibrationMainWindow(QMainWindow):
             else:
                 drawn = img
 
-            # 缩放到预览标签大小
-            label_w = self.preview_image_label.width()
-            label_h = self.preview_image_label.height()
-            max_w = max(label_w - 20, 400)
-            max_h = max(label_h - 20, 300)
-            scale = min(float(max_w) / w, float(max_h) / h, 1.0)
-            if scale < 1.0:
-                new_w = int(round(w * scale))
-                new_h = int(round(h * scale))
-                drawn = cv2.resize(drawn, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
             if len(drawn.shape) == 2:
                 rgb = cv2.cvtColor(drawn, cv2.COLOR_GRAY2RGB)
             else:
@@ -587,8 +704,8 @@ class CalibrationMainWindow(QMainWindow):
             qh, qw, qch = rgb.shape
             qimg = QImage(rgb.data, qw, qh, qch * qw, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimg.copy())
-            self.preview_image_label.setPixmap(pixmap)
-            self.preview_image_label.setText("")
+
+            self.preview_image_view.set_image(pixmap)
 
             ok_text = "✓ 成功" if n_corners > 0 else "✗ 未检测到角点"
             self.preview_image_status.setText(
@@ -596,8 +713,7 @@ class CalibrationMainWindow(QMainWindow):
                 f"角点数: {n_corners}  状态: {ok_text}"
             )
         except Exception as e:
-            self.preview_image_label.setText(f"预览错误: {str(e)}")
-            self.preview_image_status.setText("")
+            self.preview_image_status.setText(f"预览错误: {str(e)}")
 
     def _action_start_calib(self):
         root_dir = self.root_dir_edit.text().strip()

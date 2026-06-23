@@ -17,67 +17,38 @@ import os
 class CalibrationConfig:
     """标定参数配置类，统一管理所有可配置参数"""
 
+    PATTERN_CHESSBOARD = 'chessboard'
+    PATTERN_CIRCLES_GRID = 'circles_grid'
+
     def __init__(self):
+        # ---------- 标定板类型 ----------
+        self.pattern_type = CalibrationConfig.PATTERN_CHESSBOARD
+
         # ---------- 棋盘格参数 ----------
-        # 棋盘格内角点数目（列，行），参考MATLAB标定工具箱默认参数
-        self.pattern_size = (11, 8)          # (columns, rows) = (11, 8) 内角点
-        # 单个棋盘格物理尺寸（单位：毫米 mm）
-        self.square_size = 10.0               # 方格边长 15mm
+        self.pattern_size = (11, 8)
+        self.square_size = 10.0
+
+        # ---------- 圆形网格参数 ----------
+        self.circle_pattern_size = (10, 11)
+        self.circle_spacing = 9.0
 
         # ---------- 格雷码参数 ----------
-        # 格雷码位数（建议值：8-12，根据投影仪分辨率选择）
-        # 1920x1080 分辨率时，垂直方向1920=2^10.9，使用11位水平格雷码
-        # 水平方向1080=2^10.07，使用11位垂直格雷码
-        self.graycode_bits = 11               # 格雷码位数
-
-        # 每姿图像总张数：
-        #   0                   : 全黑背景图
-        #   1 ~ bits            : 水平正格雷码
-        #   bits+1 ~ 2*bits    : 水平反格雷码
-        #   2*bits+1 ~ 3*bits  : 垂直正格雷码
-        #   3*bits+1 ~ 4*bits  : 垂直反格雷码（同时，最后一张作为全白棋盘格图）
-        # 共计 4 * bits + 1 张图像
+        self.graycode_bits = 11
         self.graycode_total_imgs = 4 * self.graycode_bits + 1
 
-        # 投影仪物理分辨率（宽，高），像素单位
-        self.projector_size = (1920, 1080)    # 1080P投影仪分辨率
+        # ---------- 投影仪参数 ----------
+        self.projector_size = (1920, 1080)
 
         # ---------- 标定算法参数 ----------
-        # 重投影误差过滤阈值，超过此阈值的图像视为无效标定图像
-        self.reprojection_threshold = 1.0     # 单位：像素
+        self.reprojection_threshold = 1.0
 
         # ---------- 性能优化 ----------
-        # 大图像下采样宽高阈值。若图像长边>此阈值，将按比例下采样以加速
-        # 0 表示不下采样；建议 1500~2500
         self.downsample_max_width = 2000
 
-        # 亚像素角点迭代终止条件
-        # 参考MATLAB的criteria，最大迭代30次，收敛阈值0.001像素
+        # ---------- 迭代终止条件 ----------
         self.subpix_criteria = (None, 30, 0.001)
-
-        # 单目标定的迭代终止条件
-        self.calib_criteria = (
-            None,
-            50,
-            1e-5
-        )
-
-        # 双目标定迭代终止条件
-        self.stereo_criteria = (
-            None,
-            50,
-            1e-5
-        )
-
-        # ---------- 图像文件路径规则 ----------
-        # 每组位姿下的图像文件命名规则：
-        # 0.bmp          : 全黑背景图（black）
-        # 1 ~ N.bmp      : 水平正格雷码（horizontal_positive）
-        # N+1 ~ 2N.bmp   : 水平反格雷码（horizontal_negative）
-        # 2N+1 ~ 3N.bmp  : 垂直正格雷码（vertical_positive）
-        # 3N+1 ~ 4N.bmp  : 垂直反格雷码（vertical_negative）
-        # (4N+1).bmp     : 全白棋盘格图（white / chessboard）
-        # 其中 N = graycode_bits
+        self.calib_criteria = (None, 50, 1e-5)
+        self.stereo_criteria = (None, 50, 1e-5)
 
     @property
     def bits(self):
@@ -117,8 +88,13 @@ class CalibrationConfig:
     def print_config(self):
         """打印当前配置信息"""
         print("========== 标定参数配置 ==========")
-        print(f"棋盘格内角点数目: {self.pattern_size} (列 x 行)")
-        print(f"棋盘格方格物理尺寸: {self.square_size} mm")
+        print(f"标定板类型: {self.pattern_type}")
+        if self.pattern_type == CalibrationConfig.PATTERN_CHESSBOARD:
+            print(f"棋盘格内角点数目: {self.pattern_size} (列 x 行)")
+            print(f"棋盘格方格物理尺寸: {self.square_size} mm")
+        elif self.pattern_type == CalibrationConfig.PATTERN_CIRCLES_GRID:
+            print(f"圆形网格圆心数目: {self.circle_pattern_size} (列 x 行)")
+            print(f"圆心间距: {self.circle_spacing} mm")
         print(f"格雷码位数: {self.graycode_bits}")
         print(f"每组位姿图像总数: {self.graycode_total_imgs} 张")
         print(f"投影仪分辨率: {self.projector_size}")
