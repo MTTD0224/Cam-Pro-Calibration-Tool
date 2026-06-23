@@ -1,0 +1,78 @@
+{
+  "calibration_summary": {
+    "global_rms_error_pixels": 12.87101384637411,
+    "mean_reprojection_error_pixels": 0.8688561865983633,
+    "valid_pose_count": 5,
+    "valid_poses": [
+      "3",
+      "2",
+      "4",
+      "5",
+      "1"
+    ]
+  },
+  "camera_intrinsics": {
+    "fx": 8096.064476024741,
+    "fy": 8094.593575894538,
+    "cx": 2135.05397711745,
+    "cy": 1105.6218201585364
+  },
+  "camera_distortion": {
+    "coefficients": [
+      0.020330126458591266,
+      -0.6230152418803462,
+      -5.6172455999413275e-05,
+      -0.00068788406420554,
+      6.5000196212009795
+    ],
+    "description": "[k1, k2, p1, p2, k3, ...]"
+  },
+  "projector_intrinsics": {
+    "fx": 7095.632867928911,
+    "fy": 8475.054128230853,
+    "cx": 962.2663625979477,
+    "cy": -368.0675582496196
+  },
+  "projector_distortion": {
+    "coefficients": [
+      6.275990744354458,
+      13.19839456439946,
+      -1.1593124857055825,
+      -0.0006329527799083639,
+      -150.42347983260623
+    ],
+    "description": "[k1, k2, p1, p2, k3, ...]"
+  },
+  "extrinsics_camera_to_projector": {
+    "R_matrix": [
+      [
+        0.003151478618789838,
+        0.9997765412717742,
+        -0.02090300708423186
+      ],
+      [
+        0.9814125523831053,
+        0.0009187522377609447,
+        0.19190768071967312
+      ],
+      [
+        0.19188400195793737,
+        -0.02111926648758773,
+        -0.9811903517542518
+      ]
+    ],
+    "T_vector": [
+      7.815023824266301,
+      66.9814255856928,
+      914.5273922846814
+    ],
+    "description": "将相机坐标系中的点 X_cam 转换到投影仪坐标系：X_proj = R * X_cam + T"
+  },
+  "files": {
+    "camera_mtx": "camera_mtx.npy",
+    "camera_dist": "camera_dist.npy",
+    "projector_mtx": "projector_mtx.npy",
+    "projector_dist": "projector_dist.npy",
+    "result_T": "result_T.npy (4x4 transform matrix [R T; 0 1])"
+  }
+}
